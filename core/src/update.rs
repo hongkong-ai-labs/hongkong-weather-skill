@@ -1,4 +1,4 @@
-//! Self-update that reuses the method this binary was installed with.
+//! Self-update that reuses the method a binary was installed with.
 //!
 //! Supported methods:
 //!
@@ -20,9 +20,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const REPO: &str = "hongkong-ai-labs/hongkong-weather-skill";
-pub const BINARY: &str = "hkweather";
-pub const ENV_PREFIX: &str = "HKWEATHER";
+/// Identity of the binary being updated.
+#[derive(Debug, Clone, Copy)]
+pub struct Config {
+    /// GitHub repository, `owner/name`.
+    pub repo: &'static str,
+    /// Binary name, as installed on `PATH`.
+    pub binary: &'static str,
+    /// Environment-variable prefix, for example `HKWEATHER`.
+    pub env_prefix: &'static str,
+    /// Version compiled into the binary.
+    pub version: &'static str,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Method {
@@ -88,15 +97,16 @@ fn in_container() -> bool {
         || env::var_os("container").is_some()
 }
 
-pub fn run(check: bool, force: bool) -> Result<()> {
+/// Run `update` or `update --check` for `config`.
+pub fn run(config: &Config, check: bool, force: bool) -> Result<()> {
     let exe = env::current_exe().context("cannot locate the running binary")?;
     let exe = exe.canonicalize().unwrap_or(exe);
     let method = classify(&exe, in_container());
-    let current = env!("CARGO_PKG_VERSION");
-    let latest = latest_tag().ok();
+    let current = config.version;
+    let latest = latest_tag(config).ok();
 
     if check {
-        println!("{BINARY} {current}");
+        println!("{} {current}", config.binary);
         println!("installed with: {}", method.label());
         match latest {
             Some(ref tag) => {
@@ -104,10 +114,13 @@ pub fn run(check: bool, force: bool) -> Result<()> {
                 if same_version(tag, current) {
                     println!("up to date");
                 } else {
-                    println!("run `{BINARY} update` to install {tag}");
+                    println!("run `{} update` to install {tag}", config.binary);
                 }
             }
-            None => println!("latest release: unavailable (check the network or {REPO}/releases)"),
+            None => println!(
+                "latest release: unavailable (check the network or {}/releases)",
+                config.repo
+            ),
         }
         return Ok(());
     }
@@ -116,15 +129,15 @@ pub fn run(check: bool, force: bool) -> Result<()> {
         && let Some(ref tag) = latest
         && same_version(tag, current)
     {
-        println!("{BINARY} {current} is up to date.");
+        println!("{} {current} is up to date.", config.binary);
         return Ok(());
     }
 
     match method {
-        Method::Cargo => update_with_cargo(),
-        Method::Script => update_with_installer(&exe),
-        Method::Source(root) => update_from_source(&root),
-        Method::Brew => update_with_brew(),
+        Method::Cargo => update_with_cargo(config),
+        Method::Script => update_with_installer(config, &exe),
+        Method::Source(root) => update_from_source(config, &root),
+        Method::Brew => update_with_brew(config),
         Method::Container => bail!(
             "this binary is running from a container image; rebuild or pull a newer image instead"
         ),
@@ -132,46 +145,47 @@ pub fn run(check: bool, force: bool) -> Result<()> {
             let dir = exe
                 .parent()
                 .context("the running binary has no parent directory")?;
-            if !can_write(dir) {
+            if !can_write(config, dir) {
                 bail!(
-                    "cannot update {}: it is not in a cargo, installer, source or Homebrew location, and {} is not writable. Reinstall with `sh scripts/install.sh` from the {REPO} checkout.",
+                    "cannot update {}: it is not in a cargo, installer, source or Homebrew location, and {} is not writable. Reinstall with `sh scripts/install.sh` from the {} checkout.",
                     exe.display(),
-                    dir.display()
+                    dir.display(),
+                    config.repo
                 );
             }
-            update_with_installer(&exe)
+            update_with_installer(config, &exe)
         }
     }
 }
 
-fn update_with_cargo() -> Result<()> {
+fn update_with_cargo(config: &Config) -> Result<()> {
     let mut command = Command::new("cargo");
     command.args(["install", "--locked", "--force"]);
-    match env::var_os(format!("{ENV_PREFIX}_SOURCE")) {
+    match env::var_os(format!("{}_SOURCE", config.env_prefix)) {
         Some(source) => {
             command.args(["--path", &source.to_string_lossy()]);
         }
         None => {
-            command.args(["--git", &format!("https://github.com/{REPO}")]);
+            command.args(["--git", &format!("https://github.com/{}", config.repo)]);
         }
     }
     let status = command.status().context("failed to run cargo")?;
     if !status.success() {
         bail!("cargo install exited with {status}");
     }
-    println!("updated {BINARY} with cargo.");
+    println!("updated {} with cargo.", config.binary);
     Ok(())
 }
 
-fn update_with_installer(exe: &Path) -> Result<()> {
-    let script = installer_script(exe)?;
+fn update_with_installer(config: &Config, exe: &Path) -> Result<()> {
+    let script = installer_script(config, exe)?;
     let bin_dir = exe
         .parent()
         .context("the running binary has no parent directory")?;
     let status = Command::new("sh")
         .arg(&script)
-        .env(format!("{ENV_PREFIX}_FORCE_INSTALL"), "1")
-        .env(format!("{ENV_PREFIX}_BIN_DIR"), bin_dir)
+        .env(format!("{}_FORCE_INSTALL", config.env_prefix), "1")
+        .env(format!("{}_BIN_DIR", config.env_prefix), bin_dir)
         .status()
         .context("failed to run the release installer")?;
     if script.starts_with(env::temp_dir()) {
@@ -180,11 +194,11 @@ fn update_with_installer(exe: &Path) -> Result<()> {
     if !status.success() {
         bail!("the release installer exited with {status}");
     }
-    println!("updated {BINARY} in {}.", bin_dir.display());
+    println!("updated {} in {}.", config.binary, bin_dir.display());
     Ok(())
 }
 
-fn update_from_source(root: &Path) -> Result<()> {
+fn update_from_source(config: &Config, root: &Path) -> Result<()> {
     let status = Command::new("cargo")
         .args(["build", "--release", "--locked"])
         .current_dir(root)
@@ -196,24 +210,24 @@ fn update_from_source(root: &Path) -> Result<()> {
     println!(
         "rebuilt the source checkout at {}; the new binary is {}",
         root.display(),
-        root.join("target/release").join(BINARY).display()
+        root.join("target/release").join(config.binary).display()
     );
     Ok(())
 }
 
-fn update_with_brew() -> Result<()> {
+fn update_with_brew(config: &Config) -> Result<()> {
     let status = Command::new("brew")
-        .args(["upgrade", BINARY])
+        .args(["upgrade", config.binary])
         .status()
         .context("failed to run brew")?;
     if !status.success() {
-        bail!("brew upgrade {BINARY} exited with {status}");
+        bail!("brew upgrade {} exited with {status}", config.binary);
     }
-    println!("updated {BINARY} with Homebrew.");
+    println!("updated {} with Homebrew.", config.binary);
     Ok(())
 }
 
-fn installer_script(exe: &Path) -> Result<PathBuf> {
+fn installer_script(config: &Config, exe: &Path) -> Result<PathBuf> {
     if let Ok(cwd) = env::current_dir() {
         let candidate = cwd.join("scripts/install.sh");
         if candidate.is_file() {
@@ -226,14 +240,25 @@ fn installer_script(exe: &Path) -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-    let url = format!("https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh");
-    let path = env::temp_dir().join(format!("{BINARY}-install-{}.sh", std::process::id()));
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/main/scripts/install.sh",
+        config.repo
+    );
+    let path = env::temp_dir().join(format!(
+        "{}-install-{}.sh",
+        config.binary,
+        std::process::id()
+    ));
     fetch(&url, &path)?;
     Ok(path)
 }
 
-fn can_write(dir: &Path) -> bool {
-    let probe = dir.join(format!(".{BINARY}-write-test-{}", std::process::id()));
+fn can_write(config: &Config, dir: &Path) -> bool {
+    let probe = dir.join(format!(
+        ".{}-write-test-{}",
+        config.binary,
+        std::process::id()
+    ));
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -247,8 +272,11 @@ fn can_write(dir: &Path) -> bool {
     }
 }
 
-fn latest_tag() -> Result<String> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+fn latest_tag(config: &Config) -> Result<String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        config.repo
+    );
     let text = fetch_text(&url)?;
     extract_tag(&text).context("the GitHub response had no release tag")
 }
@@ -309,30 +337,43 @@ fn fetch_text(url: &str) -> Result<String> {
 mod tests {
     use super::*;
 
+    const TEST: Config = Config {
+        repo: "hongkong-ai-labs/hongkong-test-skill",
+        binary: "hktest",
+        env_prefix: "HKTEST",
+        version: "0.4.2",
+    };
+
     #[test]
     fn classifies_install_locations() {
         assert_eq!(
-            classify(Path::new("/Users/me/.cargo/bin/hkjc"), false),
+            classify(Path::new("/Users/me/.cargo/bin/hktest"), false),
             Method::Cargo
         );
         assert_eq!(
-            classify(Path::new("/Users/me/.local/bin/hkjc"), false),
+            classify(Path::new("/Users/me/.local/bin/hktest"), false),
             Method::Script
         );
         assert_eq!(
-            classify(Path::new("/opt/homebrew/Cellar/hkjc/1.0/bin/hkjc"), false),
+            classify(
+                Path::new("/opt/homebrew/Cellar/hktest/1.0/bin/hktest"),
+                false
+            ),
             Method::Brew
         );
-        assert_eq!(classify(Path::new("/usr/bin/hkjc"), false), Method::Unknown);
         assert_eq!(
-            classify(Path::new("/tmp/hkjc/hkjc"), true),
+            classify(Path::new("/usr/bin/hktest"), false),
+            Method::Unknown
+        );
+        assert_eq!(
+            classify(Path::new("/tmp/hktest/hktest"), true),
             Method::Container
         );
     }
 
     #[test]
     fn finds_the_source_root() {
-        match classify(Path::new("/tmp/repo/target/release/hkjc"), false) {
+        match classify(Path::new("/tmp/repo/target/release/hktest"), false) {
             Method::Source(root) => assert_eq!(root, Path::new("/tmp/repo")),
             other => panic!("expected a source build, got {other:?}"),
         }
@@ -343,7 +384,7 @@ mod tests {
         let body = r#"{"url":"https://api.github.com/repos/x/y/releases/1","tag_name": "v0.4.2","name":"v0.4.2"}"#;
         assert_eq!(extract_tag(body).as_deref(), Some("v0.4.2"));
         assert_eq!(extract_tag("{}"), None);
-        assert!(same_version("v0.4.2", "0.4.2"));
-        assert!(!same_version("v0.4.3", "0.4.2"));
+        assert!(same_version("v0.4.2", TEST.version));
+        assert!(!same_version("v0.4.3", TEST.version));
     }
 }

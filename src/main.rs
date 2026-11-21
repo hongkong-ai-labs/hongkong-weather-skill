@@ -8,11 +8,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use hongkong_skill_core::update::{self, Config};
 use serde_json::json;
 
 use api::{Client, Lang};
 
-mod update;
+const UPDATER: Config = Config {
+    repo: "hongkong-ai-labs/hongkong-weather-skill",
+    binary: "hkweather",
+    env_prefix: "HKWEATHER",
+    version: env!("CARGO_PKG_VERSION"),
+};
 
 #[derive(Parser)]
 #[command(
@@ -93,7 +99,7 @@ async fn main() -> Result<()> {
     let client = Client::new(Duration::from_secs(cli.cache_ttl))?;
 
     if let Command::Mcp = cli.command {
-        return mcp::serve(client);
+        return mcp::serve(client).await;
     }
 
     match cli.command {
@@ -242,7 +248,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Update { check, force } => {
-            update::run(check, force)?;
+            update::run(&UPDATER, check, force)?;
         }
         Command::Mcp => unreachable!(),
     }

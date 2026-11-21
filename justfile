@@ -77,6 +77,14 @@ skill-check:
     sh -n scripts/install.sh
     echo "scripts ok"
 
+# Refresh the vendored hongkong-skill-core copy from ../hongkong-skill-core.
+core-sync:
+    bash scripts/sync-core.sh
+
+# Verify the vendored core copy matches ../hongkong-skill-core (skips if absent).
+core-check:
+    bash scripts/check-core.sh
+
 # Print the release tag CI would use for the current version.
 version:
     @python3 -c 'import json, subprocess; out = subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"]); print("v" + json.loads(out)["packages"][0]["version"])'

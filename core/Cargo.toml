@@ -1,0 +1,16 @@
+[package]
+name = "hongkong-skill-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Shared MCP stdio server and self-update runtime for the Hong Kong AI Labs skills"
+license = "MIT"
+repository = "https://github.com/hongkong-ai-labs/hongkong-skill-core"
+readme = "README.md"
+keywords = ["mcp", "hong-kong", "cli", "json-rpc"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "io-std"] }
