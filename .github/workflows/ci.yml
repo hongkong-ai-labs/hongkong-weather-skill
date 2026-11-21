@@ -44,6 +44,9 @@ jobs:
       - name: Test
         run: cargo test --all --locked
 
+      - name: Doc
+        run: cargo doc --no-deps --locked
+
       - name: Build release
         run: cargo build --release --locked
 
