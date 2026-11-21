@@ -38,6 +38,30 @@ BIN="$(bash scripts/ensure-binary.sh)"
 It checks, in order: `$HKWEATHER_BIN`, `hkweather` on `PATH`,
 `scripts/install.sh`, then `cargo build --release --locked` in the repo root.
 
+### Install the binary directly
+
+`npx skills add` installs the skill files. If the binary is missing, install it
+with the release installer or cargo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hongkong-ai-labs/hongkong-weather-skill/main/scripts/install.sh | sh
+# or
+cargo install --git https://github.com/hongkong-ai-labs/hongkong-weather-skill --locked
+```
+
+Register it with any MCP client:
+
+```bash
+npx add-mcp "$(command -v hkweather) mcp" --name hongkong-weather -a claude-code -a codex -a cursor -y
+claude mcp add hongkong-weather -- hkweather mcp
+codex mcp add hongkong-weather -- hkweather mcp
+```
+
+`add-mcp` detects the client configuration files in the current project; add
+`-g` for a global install. `$(command -v hkweather)` keeps the entry correct
+when the binary is on `PATH`; substitute an absolute path if your client does
+not inherit the shell `PATH`.
+
 ## CLI
 
 Prefer `--json` when you need to parse. Tables are for humans. All timestamps
@@ -54,6 +78,7 @@ $BIN local --json                         # local forecast + outlook
 $BIN rain --json                          # district rainfall since midnight
 $BIN uv --json                            # UV index by station
 $BIN all --json                           # everything in one object
+$BIN update --check
 ```
 
 `--lang tc` or `--lang sc` returns HKO's Traditional or Simplified Chinese

@@ -8,9 +8,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use hongkong_skill_core::update::{self, Config};
 use serde_json::json;
 
 use api::{Client, Lang};
+
+const UPDATER: Config = Config {
+    repo: "hongkong-ai-labs/hongkong-weather-skill",
+    binary: "hkweather",
+    env_prefix: "HKWEATHER",
+    version: env!("CARGO_PKG_VERSION"),
+};
 
 #[derive(Parser)]
 #[command(
@@ -71,6 +79,15 @@ enum Command {
         #[arg(long, short)]
         place: Option<String>,
     },
+    /// Update this binary using the method it was installed with
+    Update {
+        /// Only report the current version, latest release and install method
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even when the current version is up to date
+        #[arg(long)]
+        force: bool,
+    },
     /// Run the MCP server over stdio
     Mcp,
 }
@@ -82,7 +99,7 @@ async fn main() -> Result<()> {
     let client = Client::new(Duration::from_secs(cli.cache_ttl))?;
 
     if let Command::Mcp = cli.command {
-        return mcp::serve(client);
+        return mcp::serve(client).await;
     }
 
     match cli.command {
@@ -229,6 +246,9 @@ async fn main() -> Result<()> {
                 println!("\n{}", render::local(&local));
                 println!("\n{}", render::forecast(&forecast, None));
             }
+        }
+        Command::Update { check, force } => {
+            update::run(&UPDATER, check, force)?;
         }
         Command::Mcp => unreachable!(),
     }

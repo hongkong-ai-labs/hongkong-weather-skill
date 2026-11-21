@@ -3,6 +3,7 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY core ./core
 COPY src ./src
 RUN cargo build --locked --release --bin hkweather
 
