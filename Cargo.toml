@@ -1,0 +1,30 @@
+[package]
+name = "hongkong-weather-skill"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Hong Kong Observatory weather data as a CLI and an MCP server"
+license = "MIT"
+repository = "https://github.com/hongkong-ai-labs/hongkong-weather-skill"
+readme = "README.md"
+keywords = ["hong-kong", "weather", "hko", "forecast", "mcp"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "hkweather"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
