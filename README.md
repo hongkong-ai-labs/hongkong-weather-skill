@@ -54,6 +54,7 @@ hkweather all                           # everything
 hkweather --json current                # machine-readable
 hkweather --lang tc forecast            # Traditional Chinese HKO text
 hkweather mcp                           # MCP over stdio
+hkweather update --check
 ```
 
 ## MCP

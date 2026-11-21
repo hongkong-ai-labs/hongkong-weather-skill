@@ -12,6 +12,8 @@ use serde_json::json;
 
 use api::{Client, Lang};
 
+mod update;
+
 #[derive(Parser)]
 #[command(
     name = "hkweather",
@@ -70,6 +72,15 @@ enum Command {
         /// Place-name substring for current readings
         #[arg(long, short)]
         place: Option<String>,
+    },
+    /// Update this binary using the method it was installed with
+    Update {
+        /// Only report the current version, latest release and install method
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even when the current version is up to date
+        #[arg(long)]
+        force: bool,
     },
     /// Run the MCP server over stdio
     Mcp,
@@ -229,6 +240,9 @@ async fn main() -> Result<()> {
                 println!("\n{}", render::local(&local));
                 println!("\n{}", render::forecast(&forecast, None));
             }
+        }
+        Command::Update { check, force } => {
+            update::run(check, force)?;
         }
         Command::Mcp => unreachable!(),
     }

@@ -54,6 +54,7 @@ $BIN local --json                         # local forecast + outlook
 $BIN rain --json                          # district rainfall since midnight
 $BIN uv --json                            # UV index by station
 $BIN all --json                           # everything in one object
+$BIN update --check
 ```
 
 `--lang tc` or `--lang sc` returns HKO's Traditional or Simplified Chinese
