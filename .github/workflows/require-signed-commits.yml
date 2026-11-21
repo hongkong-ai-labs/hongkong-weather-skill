@@ -21,22 +21,25 @@ jobs:
         run: |
           set -euo pipefail
 
+          head="${{ github.sha }}"
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             shas=$(gh api "repos/$REPO/pulls/${{ github.event.pull_request.number }}/commits" \
-              --paginate --jq '.[].sha')
+              --paginate --jq '.[].sha' 2>/dev/null || true)
           else
             before="${{ github.event.before }}"
-            head="${{ github.sha }}"
             if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
-              shas=$(gh api "repos/$REPO/compare/${before}...${head}" --jq '.commits[].sha')
+              # A force-push can leave `before` unreachable, so fall back to just the pushed tip.
+              shas=$(gh api "repos/$REPO/compare/${before}...${head}" \
+                --jq '.commits[].sha' 2>/dev/null || true)
             else
-              shas="$head"
+              shas=""
             fi
           fi
 
+          # New branch, first push, or an un-comparable range: check only the tip.
           if [ -z "$shas" ]; then
-            echo "No new commits to check."
-            exit 0
+            shas="$head"
           fi
 
           failed=0
