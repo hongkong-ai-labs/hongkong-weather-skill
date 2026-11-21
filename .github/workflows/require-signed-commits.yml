@@ -1,0 +1,56 @@
+name: Require signed commits
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-commits:
+    name: Commits are signed and verified
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Check every commit signature
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            shas=$(gh api "repos/$REPO/pulls/${{ github.event.pull_request.number }}/commits" \
+              --paginate --jq '.[].sha')
+          else
+            before="${{ github.event.before }}"
+            head="${{ github.sha }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              shas=$(gh api "repos/$REPO/compare/${before}...${head}" --jq '.commits[].sha')
+            else
+              shas="$head"
+            fi
+          fi
+
+          if [ -z "$shas" ]; then
+            echo "No new commits to check."
+            exit 0
+          fi
+
+          failed=0
+          for sha in $shas; do
+            result=$(gh api "repos/$REPO/commits/$sha" \
+              --jq '"\(.commit.verification.verified) \(.commit.verification.reason)"')
+            verified=${result%% *}
+            reason=${result#* }
+            if [ "$verified" = "true" ]; then
+              echo "OK    $sha ($reason)"
+            else
+              echo "::error::Commit $sha is not signed or not verified ($reason)"
+              failed=1
+            fi
+          done
+
+          exit $failed
