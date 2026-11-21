@@ -301,7 +301,9 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     match value {
-        serde_json::Value::Object(_) => serde_json::from_value(value).map_err(serde::de::Error::custom),
+        serde_json::Value::Object(_) => {
+            serde_json::from_value(value).map_err(serde::de::Error::custom)
+        }
         _ => Ok(ReadingBlock::default()),
     }
 }

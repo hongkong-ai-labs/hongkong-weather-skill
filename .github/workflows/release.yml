@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify tag and changelog
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check tag matches Cargo.toml and CHANGELOG.md
+        id: meta
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          version=$(python3 - <<'PY'
+          import pathlib, re, sys
+          text = pathlib.Path("Cargo.toml").read_text(encoding="utf-8")
+          package = text.split("[package]", 1)[1].split("\n[", 1)[0]
+          match = re.search(r'^version\s*=\s*"([^"]+)"', package, re.MULTILINE)
+          if not match:
+              sys.exit("Cargo.toml has no package version")
+          print(match.group(1))
+          PY
+          )
+          if [ -z "$version" ]; then
+            echo "could not read the version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match Cargo.toml version $version (expected v$version)" >&2
+            exit 1
+          fi
+          if ! grep -qF "## [$version]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## [$version]' section" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runs-on: macos-latest
+          - target: x86_64-apple-darwin
+            runs-on: macos-latest
+          - target: x86_64-unknown-linux-musl
+            runs-on: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+    env:
+      TAG: ${{ needs.verify.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add "${{ matrix.target }}"
+
+      - name: Install musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y musl-tools
+          mangled="$(printf '%s' '${{ matrix.target }}' | tr '-' '_')"
+          echo "CC_${mangled}=musl-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_$(printf '%s' "$mangled" | tr '[:lower:]' '[:upper:]')_LINKER=musl-gcc" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Package
+        run: |
+          mkdir -p pkg
+          cp "target/${{ matrix.target }}/release/hkweather" pkg/hkweather
+          cp LICENSE pkg/LICENSE
+          tar -czf "hkweather-${TAG}-${{ matrix.target }}.tar.gz" -C pkg hkweather LICENSE
+
+      - name: Smoke test the packaged binary
+        run: |
+          case "$(uname -s):$(uname -m)" in
+            Darwin:arm64) native=aarch64-apple-darwin ;;
+            Darwin:x86_64) native=x86_64-apple-darwin ;;
+            Linux:x86_64) native=x86_64-unknown-linux-musl ;;
+            Linux:aarch64 | Linux:arm64) native=aarch64-unknown-linux-musl ;;
+            *) native="" ;;
+          esac
+          if [ "$native" != "${{ matrix.target }}" ]; then
+            echo "${{ matrix.target }} is not native to this runner; skipping the smoke test"
+            exit 0
+          fi
+          mkdir -p smoke
+          tar -xzf "hkweather-${TAG}-${{ matrix.target }}.tar.gz" -C smoke
+          ./smoke/hkweather --version
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: hkweather-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.verify.outputs.tag }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download tarballs
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        run: |
+          cd dist
+          shasum -a 256 ./*.tar.gz | awk '{ file = $2; sub(/^\.\//, "", file); print $1 "  " file }' | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Build release notes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          version = os.environ["VERSION"]
+          lines = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next((i for i, line in enumerate(lines) if line.startswith(f"## [{version}]")), None)
+          if start is None:
+              raise SystemExit(f"CHANGELOG.md has no ## [{version}] section")
+          section = [lines[start]]
+          for line in lines[start + 1:]:
+              if line.startswith("## ["):
+                  break
+              section.append(line)
+          Path("section.md").write_text("\n".join(section).strip() + "\n", encoding="utf-8")
+          PY
+
+          cat > markers.md <<'EOF'
+          ## Install
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/hongkong-ai-labs/hongkong-weather-skill/main/scripts/install.sh | sh
+          ```
+
+          Or add it as an agent skill:
+
+          ```sh
+          npx skills add hongkong-ai-labs/hongkong-weather-skill
+          ```
+          EOF
+
+          { cat section.md; printf '\n'; cat markers.md; } > notes.md
+
+      - name: Publish
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$TAG" --notes-file notes.md --verify-tag
