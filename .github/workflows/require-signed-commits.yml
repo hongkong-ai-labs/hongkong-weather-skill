@@ -22,6 +22,7 @@ jobs:
           set -euo pipefail
 
           head="${{ github.sha }}"
+          shas=""
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             shas=$(gh api "repos/$REPO/pulls/${{ github.event.pull_request.number }}/commits" \
@@ -29,15 +30,15 @@ jobs:
           else
             before="${{ github.event.before }}"
             if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
-              # A force-push can leave `before` unreachable, so fall back to just the pushed tip.
+              # A force-push can leave `before` unreachable; the compare then fails and we
+              # fall back to checking only the pushed tip.
               shas=$(gh api "repos/$REPO/compare/${before}...${head}" \
                 --jq '.commits[].sha' 2>/dev/null || true)
-            else
-              shas=""
             fi
           fi
 
-          # New branch, first push, or an un-comparable range: check only the tip.
+          # Keep only well-formed SHAs; API error payloads must never be treated as commit ids.
+          shas=$(printf '%s\n' "$shas" | grep -Eo '^[0-9a-f]{40}$' || true)
           if [ -z "$shas" ]; then
             shas="$head"
           fi
