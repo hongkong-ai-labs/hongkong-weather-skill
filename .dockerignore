@@ -1,0 +1,9 @@
+target
+.git
+.github
+.freebuff
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*

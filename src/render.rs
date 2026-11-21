@@ -18,7 +18,7 @@ fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let widths = width(rows, headers);
     let mut out = String::new();
     out.push_str(
-        &headers
+        headers
             .iter()
             .enumerate()
             .map(|(index, header)| format!("{header:<width$}", width = widths[index]))
@@ -37,7 +37,7 @@ fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out.push('\n');
     for row in rows {
         out.push_str(
-            &row.iter()
+            row.iter()
                 .enumerate()
                 .map(|(index, cell)| format!("{cell:<width$}", width = widths[index]))
                 .collect::<Vec<_>>()
@@ -74,19 +74,28 @@ pub fn current(report: &CurrentReport, place: Option<&str>) -> String {
     let temperatures = report.temperatures(place);
     if !temperatures.is_empty() {
         out.push_str("Temperature\n");
-        out.push_str(&table(&["PLACE", "VALUE", "UNIT"], &reading_rows(&temperatures)));
+        out.push_str(&table(
+            &["PLACE", "VALUE", "UNIT"],
+            &reading_rows(&temperatures),
+        ));
         out.push('\n');
     }
     let humidity = report.humidity(place);
     if !humidity.is_empty() {
         out.push_str("Humidity\n");
-        out.push_str(&table(&["PLACE", "VALUE", "UNIT"], &reading_rows(&humidity)));
+        out.push_str(&table(
+            &["PLACE", "VALUE", "UNIT"],
+            &reading_rows(&humidity),
+        ));
         out.push('\n');
     }
     let rainfall = report.rainfall(place);
     if !rainfall.is_empty() {
         out.push_str("Rainfall since midnight\n");
-        out.push_str(&table(&["PLACE", "VALUE", "UNIT"], &reading_rows(&rainfall)));
+        out.push_str(&table(
+            &["PLACE", "VALUE", "UNIT"],
+            &reading_rows(&rainfall),
+        ));
         out.push('\n');
     }
     if !report.uvindex.data.is_empty() {
@@ -109,10 +118,16 @@ pub fn current(report: &CurrentReport, place: Option<&str>) -> String {
     if !report.rainfall_00_12.is_empty() || !report.rainfall_last_month.is_empty() {
         out.push_str("Rainfall totals\n");
         if !report.rainfall_00_12.is_empty() {
-            out.push_str(&format!("  Midnight to noon: {} mm\n", report.rainfall_00_12));
+            out.push_str(&format!(
+                "  Midnight to noon: {} mm\n",
+                report.rainfall_00_12
+            ));
         }
         if !report.rainfall_last_month.is_empty() {
-            out.push_str(&format!("  Last month:      {} mm\n", report.rainfall_last_month));
+            out.push_str(&format!(
+                "  Last month:      {} mm\n",
+                report.rainfall_last_month
+            ));
         }
         if !report.rainfall_january_to_last_month.is_empty() {
             out.push_str(&format!(
@@ -231,7 +246,9 @@ pub fn rain(report: &CurrentReport) -> String {
         .map(|row| {
             vec![
                 row.place.clone(),
-                row.max.map(|max| format!("{max}")).unwrap_or_else(|| "-".to_string()),
+                row.max
+                    .map(|max| format!("{max}"))
+                    .unwrap_or_else(|| "-".to_string()),
                 row.unit.clone(),
                 row.main.clone().unwrap_or_default(),
             ]
@@ -239,7 +256,10 @@ pub fn rain(report: &CurrentReport) -> String {
         .collect();
     let mut out = table(&["DISTRICT", "MAX SINCE MIDNIGHT", "UNIT", "MAIN"], &rows);
     if !report.rainfall_00_12.is_empty() {
-        out.push_str(&format!("\nMidnight to noon total: {} mm\n", report.rainfall_00_12));
+        out.push_str(&format!(
+            "\nMidnight to noon total: {} mm\n",
+            report.rainfall_00_12
+        ));
     }
     out.trim_end().to_string()
 }

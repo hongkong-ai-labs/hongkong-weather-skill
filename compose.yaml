@@ -1,0 +1,13 @@
+services:
+  stdio:
+    build: .
+    image: hkweather:local
+    stdin_open: true
+    entrypoint: ["hkweather"]
+    command: ["mcp"]
+
+  cli:
+    profiles: ["cli"]
+    build: .
+    image: hkweather:local
+    command: ["--help"]

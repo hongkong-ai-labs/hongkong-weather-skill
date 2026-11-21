@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --all --locked
+
+      - name: Build release
+        run: cargo build --release --locked
+
+  skill:
+    name: skill package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate SKILL.md
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path("SKILL.md")
+          if not path.is_file():
+              sys.exit("SKILL.md is missing at the repo root")
+
+          text = path.read_text(encoding="utf-8")
+          if not text.startswith("---\n"):
+              sys.exit("SKILL.md does not start with YAML frontmatter")
+
+          parts = text.split("---\n", 2)
+          if len(parts) != 3:
+              sys.exit("SKILL.md frontmatter is not closed")
+
+          fields = {}
+          for line in parts[1].splitlines():
+              if not line.strip() or line.lstrip().startswith("#"):
+                  continue
+              if ":" not in line:
+                  sys.exit("bad frontmatter line: %r" % line)
+              key, value = line.split(":", 1)
+              fields[key.strip()] = value.strip().strip('"').strip("'")
+
+          if fields.get("name") != "hongkong-weather-skill":
+              sys.exit("frontmatter name must be hongkong-weather-skill, got %r" % fields.get("name"))
+          if not fields.get("description"):
+              sys.exit("frontmatter description is empty")
+
+          body = parts[2].lstrip("\n").splitlines()
+          if len(body) >= 500:
+              sys.exit("SKILL.md body is %d lines, must stay under 500" % len(body))
+
+          print("SKILL.md ok: %d body lines" % len(body))
+          PY
+
+      - name: Validate scripts
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          sh -n scripts/install.sh
+          echo "scripts ok"

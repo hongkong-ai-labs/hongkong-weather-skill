@@ -1,31 +1,36 @@
 #!/usr/bin/env bash
-# Print the absolute path of a working hkweather binary.
-# Order: $HKWEATHER_BIN, hkweather on PATH, cargo build --release in this checkout.
+# Print the absolute path of a working hkweather binary, or exit 1.
 set -euo pipefail
 
-if [ -n "${HKWEATHER_BIN:-}" ] && [ -x "$HKWEATHER_BIN" ]; then
-  printf '%s\n' "$HKWEATHER_BIN"
+if [[ -n "${HKWEATHER_BIN:-}" && -x "${HKWEATHER_BIN}" ]]; then
+  printf '%s\n' "$(cd "$(dirname "${HKWEATHER_BIN}")" && pwd)/$(basename "${HKWEATHER_BIN}")"
   exit 0
 fi
 
-if command -v hkweather >/dev/null 2>&1; then
-  command -v hkweather
+if resolved="$(command -v hkweather 2>/dev/null)" && [[ -n "$resolved" ]]; then
+  printf '%s\n' "$resolved"
   exit 0
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ -f "$ROOT/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
-  (
-    cd "$ROOT"
-    cargo build --release --locked >/dev/null
-  )
-  BIN="$ROOT/target/release/hkweather"
-  if [ -x "$BIN" ]; then
-    printf '%s\n' "$BIN"
-    exit 0
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(dirname "$script_dir")"
+
+if [[ -f "$script_dir/install.sh" ]] &&
+  path="$(sh "$script_dir/install.sh")" &&
+  [[ -n "$path" && -x "$path" ]]; then
+  printf '%s\n' "$path"
+  exit 0
+fi
+
+if [[ -f "$repo_root/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
+  if (cd "$repo_root" && cargo build --release --locked >&2); then
+    path="$repo_root/target/release/hkweather"
+    if [[ -x "$path" ]]; then
+      printf '%s\n' "$path"
+      exit 0
+    fi
   fi
 fi
 
-echo "hkweather: no binary found and no Cargo build available" >&2
-echo "Set HKWEATHER_BIN, put hkweather on PATH, or build with: cargo build --release --locked" >&2
+printf 'ensure-binary: no hkweather binary via HKWEATHER_BIN, PATH, install.sh or cargo build\n' >&2
 exit 1
