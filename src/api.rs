@@ -494,4 +494,214 @@ mod tests {
         assert!(warnings.details[0].is_cancelled());
         assert_eq!(warnings.details[0].name(), "Red Fire Danger Warning");
     }
+
+    #[test]
+    fn language_aliases_map_to_hko_codes() {
+        for value in ["en", "ENG", "English"] {
+            assert_eq!(Lang::parse(value).unwrap(), Lang::En);
+            assert_eq!(Lang::parse(value).unwrap().code(), "en");
+        }
+        for value in ["tc", "zh-HK", "zh_hk", "traditional"] {
+            assert_eq!(Lang::parse(value).unwrap(), Lang::Tc);
+            assert_eq!(Lang::parse(value).unwrap().code(), "tc");
+        }
+        for value in ["sc", "zh-CN", "zh_cn", "simplified"] {
+            assert_eq!(Lang::parse(value).unwrap(), Lang::Sc);
+            assert_eq!(Lang::parse(value).unwrap().code(), "sc");
+        }
+
+        let error = Lang::parse("fr").unwrap_err().to_string();
+        assert!(error.contains("en, tc or sc"), "{error}");
+    }
+
+    #[test]
+    fn reading_display_prefers_value_then_max() {
+        let string = Reading {
+            place: "Waglan Island".into(),
+            value: serde_json::json!("Trace"),
+            unit: "mm".into(),
+            max: None,
+            main: None,
+            desc: None,
+        };
+        assert_eq!(string.display_value(), "Trace");
+
+        let number = Reading {
+            place: "Hong Kong Observatory".into(),
+            value: serde_json::json!(21.4),
+            unit: "C".into(),
+            max: None,
+            main: None,
+            desc: None,
+        };
+        assert_eq!(number.display_value(), "21.4");
+
+        let max_only = Reading {
+            place: "Central & Western District".into(),
+            value: serde_json::Value::Null,
+            unit: "mm".into(),
+            max: Some(12.5),
+            main: Some("FALSE".into()),
+            desc: None,
+        };
+        assert_eq!(max_only.display_value(), "12.5");
+
+        let empty = Reading {
+            place: String::new(),
+            value: serde_json::Value::Null,
+            unit: String::new(),
+            max: None,
+            main: None,
+            desc: None,
+        };
+        assert_eq!(empty.display_value(), "-");
+    }
+
+    #[test]
+    fn place_filter_is_case_insensitive() {
+        let report: CurrentReport = serde_json::from_str(
+            r#"{"temperature":{"data":[
+                {"place":"Hong Kong Observatory","value":21.4,"unit":"C"},
+                {"place":"King's Park","value":20.9,"unit":"C"},
+                {"place":"Central & Western District","value":21.1,"unit":"C"}]}}"#,
+        )
+        .unwrap();
+
+        let central = report.temperatures(Some("CENTRAL"));
+        assert_eq!(central.len(), 1);
+        assert_eq!(central[0].place, "Central & Western District");
+
+        assert_eq!(report.temperatures(None).len(), 3);
+        assert!(report.temperatures(Some("nowhere")).is_empty());
+    }
+
+    #[test]
+    fn forecast_day_labels_and_units() {
+        let day: ForecastDay = serde_json::from_str(
+            r#"{"forecastDate":"20261122","week":"Sunday",
+                "forecastMintemp":{"value":19,"unit":"C"},
+                "forecastMaxtemp":{"value":23,"unit":"C"},
+                "forecastMinrh":{"value":40,"unit":"percent"},
+                "forecastMaxrh":{"value":70,"unit":"percent"}}"#,
+        )
+        .unwrap();
+        assert_eq!(day.date_label(), "Sun 22 Nov 2026");
+        assert_eq!(day.temperature(), "19-23°C");
+        assert_eq!(day.humidity(), "40-70%");
+
+        let incomplete: ForecastDay = serde_json::from_str(r#"{"forecastDate":"TBD"}"#).unwrap();
+        assert_eq!(incomplete.date_label(), "TBD");
+        assert_eq!(incomplete.temperature(), "-");
+        assert_eq!(incomplete.humidity(), "-");
+        assert_eq!(incomplete.rain_probability(), "-");
+    }
+
+    #[test]
+    fn rain_probability_is_normalised() {
+        for (raw, expected) in [
+            ("LOW", "Low"),
+            ("medium", "Medium"),
+            ("med", "Medium"),
+            ("High", "High"),
+            ("Very Low", "very low"),
+        ] {
+            let day: ForecastDay =
+                serde_json::from_value(serde_json::json!({ "PSR": raw })).unwrap();
+            assert_eq!(day.rain_probability(), expected);
+        }
+    }
+
+    #[test]
+    fn warning_names_cover_common_codes() {
+        assert_eq!(
+            warning_name("WTCSGNL", None),
+            "Tropical Cyclone Warning Signal"
+        );
+        assert_eq!(warning_name("WRAIN", None), "Rainstorm Warning");
+        assert_eq!(warning_name("WFIRE", None), "Fire Danger Warning");
+        assert_eq!(
+            warning_name("WFIRE", Some("WFIREY")),
+            "Yellow Fire Danger Warning"
+        );
+        assert_eq!(
+            warning_name("WFIRE", Some("WFIRER")),
+            "Red Fire Danger Warning"
+        );
+        assert_eq!(
+            warning_name("WCOLD", Some("WCOLDR")),
+            "Red Cold Weather Warning"
+        );
+        assert_eq!(
+            warning_name("WHOT", Some("WHOTY")),
+            "Yellow Very Hot Weather Warning"
+        );
+        assert_eq!(warning_name("WMSGNL", None), "Strong Monsoon Signal");
+        assert_eq!(warning_name("SOMETHING_NEW", None), "Weather Warning");
+    }
+
+    #[test]
+    fn cancelled_status_or_text_marks_a_warning_cancelled() {
+        let by_status: WarningDetail = serde_json::from_str(
+            r#"{"contents":[],"warningStatementCode":"WRAIN",
+                "status":"Cancelled"}"#,
+        )
+        .unwrap();
+        assert!(by_status.is_cancelled());
+
+        let by_text: WarningDetail = serde_json::from_str(
+            r#"{"contents":["The Thunderstorm Warning has been cancelled."],
+                "warningStatementCode":"WTS"}"#,
+        )
+        .unwrap();
+        assert!(by_text.is_cancelled());
+
+        let active: WarningDetail = serde_json::from_str(
+            r#"{"contents":["The Cold Weather Warning is now in force."],
+                "warningStatementCode":"WCOLD"}"#,
+        )
+        .unwrap();
+        assert!(!active.is_cancelled());
+    }
+
+    #[test]
+    fn warning_message_accepts_string_or_array() {
+        let single: CurrentReport =
+            serde_json::from_str(r#"{"warningMessage":"Fire Danger Warning cancelled."}"#).unwrap();
+        assert_eq!(single.warning_message.len(), 1);
+
+        let several: CurrentReport =
+            serde_json::from_str(r#"{"warningMessage":["A","B",""]}"#).unwrap();
+        assert_eq!(several.warning_message, vec!["A", "B", ""]);
+
+        let empty: CurrentReport = serde_json::from_str(r#"{"warningMessage":""}"#).unwrap();
+        assert!(empty.warning_message.is_empty());
+    }
+
+    #[test]
+    fn empty_uvindex_string_becomes_empty_block() {
+        let report: CurrentReport = serde_json::from_str(r#"{"uvindex":""}"#).unwrap();
+        assert!(report.uvindex.data.is_empty());
+
+        let populated: CurrentReport = serde_json::from_str(
+            r#"{"uvindex":{"data":[{"place":"King's Park","value":0,"desc":"low"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(populated.uvindex.data.len(), 1);
+    }
+
+    #[test]
+    fn timestamps_format_and_fall_back() {
+        assert_eq!(timestamp("2026-11-21T23:02:00+08:00"), "2026-11-21 23:02");
+        assert_eq!(timestamp("2026-11-21"), "2026-11-21");
+    }
+
+    #[test]
+    fn warning_text_joins_contents() {
+        let warning: WarningDetail = serde_json::from_str(
+            r#"{"contents":["First line.","Second line."],
+                "warningStatementCode":"WTS"}"#,
+        )
+        .unwrap();
+        assert_eq!(warning.text(), "First line. Second line.");
+    }
 }
