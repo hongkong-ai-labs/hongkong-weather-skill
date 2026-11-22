@@ -3,6 +3,7 @@
 mod api;
 mod mcp;
 mod render;
+mod sources;
 
 use std::time::Duration;
 
