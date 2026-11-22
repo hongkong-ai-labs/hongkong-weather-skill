@@ -300,3 +300,157 @@ fn wrap(text: &str, width: usize) -> String {
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{ForecastDay, Reading, WarningDetail};
+    use serde_json::json;
+
+    fn reading(place: &str, max: Option<f64>) -> Reading {
+        Reading {
+            place: place.to_string(),
+            value: serde_json::Value::Null,
+            unit: "mm".to_string(),
+            max,
+            main: Some("FALSE".to_string()),
+            desc: None,
+        }
+    }
+
+    fn warning(code: &str, contents: &str, status: Option<&str>) -> WarningDetail {
+        serde_json::from_value(json!({
+            "contents": [contents],
+            "warningStatementCode": code,
+            "status": status,
+            "updateTime": "2026-11-21T23:50:00+08:00"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn warnings_hide_cancelled_unless_requested() {
+        let report = WarningReport {
+            details: vec![
+                warning("WCOLD", "The Cold Weather Warning is now in force.", None),
+                warning("WFIRE", "Fire Danger Warning cancelled.", Some("Cancelled")),
+            ],
+        };
+
+        let active = warnings(&report, false);
+        assert!(active.contains("Cold Weather Warning"));
+        assert!(!active.contains("Fire Danger Warning"));
+
+        let all = warnings(&report, true);
+        assert!(all.contains("Fire Danger Warning"));
+        assert!(all.contains("cancelled"));
+    }
+
+    #[test]
+    fn warnings_report_when_none_are_active() {
+        assert_eq!(
+            warnings(&WarningReport::default(), false),
+            "No active Hong Kong weather warnings."
+        );
+    }
+
+    #[test]
+    fn forecast_limit_takes_the_first_days() {
+        let days: Vec<ForecastDay> = (22..=24)
+            .map(|day| {
+                serde_json::from_value(json!({
+                    "forecastDate": format!("202611{day}"),
+                    "week": "Sunday",
+                    "forecastWeather": "Sunny"
+                }))
+                .unwrap()
+            })
+            .collect();
+        let report = ForecastReport {
+            update_time: "2026-11-21T23:02:00+08:00".to_string(),
+            days,
+            ..ForecastReport::default()
+        };
+
+        let two = forecast(&report, Some(2));
+        assert!(two.contains("Sun 22 Nov 2026"));
+        assert!(two.contains("Mon 23 Nov 2026"));
+        assert!(!two.contains("Tue 24 Nov 2026"));
+
+        let all = forecast(&report, None);
+        assert!(all.contains("Tue 24 Nov 2026"));
+        assert!(all.contains("2026-11-21 23:02"));
+    }
+
+    #[test]
+    fn current_skips_sections_without_data() {
+        let mut report = CurrentReport {
+            update_time: "2026-11-21T23:02:00+08:00".to_string(),
+            ..CurrentReport::default()
+        };
+        report.temperature.data = vec![Reading {
+            place: "Hong Kong Observatory".to_string(),
+            value: json!(21.4),
+            unit: "C".to_string(),
+            max: None,
+            main: None,
+            desc: None,
+        }];
+
+        let out = current(&report, None);
+        assert!(out.contains("Temperature"));
+        assert!(out.contains("21.4"));
+        assert!(!out.contains("Humidity"));
+        assert!(!out.contains("UV index"));
+        assert!(!out.contains("Rainfall totals"));
+
+        let filtered = current(&report, Some("King's Park"));
+        assert!(!filtered.contains("Temperature"));
+    }
+
+    #[test]
+    fn rain_table_marks_missing_max_and_includes_totals() {
+        let mut report = CurrentReport::default();
+        report.rainfall.data = vec![
+            reading("Central & Western District", Some(0.0)),
+            reading("Waglan Island", None),
+        ];
+        report.rainfall_00_12 = "3.5".to_string();
+
+        let out = rain(&report);
+        assert!(out.contains("DISTRICT"));
+        assert!(out.contains("3.5"));
+        let waglan = out
+            .lines()
+            .find(|line| line.starts_with("Waglan Island"))
+            .expect("Waglan row");
+        assert!(waglan.contains(" - "), "{waglan}");
+    }
+
+    #[test]
+    fn local_forecast_includes_period_and_description() {
+        let report: LocalForecast = serde_json::from_str(
+            r#"{"updateTime":"2026-11-21T23:02:00+08:00",
+                "forecastPeriod":"Tonight and tomorrow morning",
+                "forecastDesc":"Mainly cloudy with one or two rain patches.",
+                "outlook":"Bright periods in the following days."}"#,
+        )
+        .unwrap();
+
+        let out = local(&report);
+        assert!(out.contains("Forecast for Tonight and tomorrow morning"));
+        assert!(out.contains("one or two rain patches"));
+        assert!(out.contains("Outlook"));
+    }
+
+    #[test]
+    fn uv_renderer_lists_places_and_descriptions() {
+        let report: CurrentReport = serde_json::from_str(
+            r#"{"uvindex":{"data":[{"place":"King's Park","value":3,"desc":"moderate"}]}}"#,
+        )
+        .unwrap();
+        let out = uv(&report);
+        assert!(out.contains("King's Park"));
+        assert!(out.contains("moderate"));
+    }
+}
